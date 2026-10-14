@@ -62,10 +62,11 @@ Request approval once for the implementation plan, covering its files, tests and
 graph refresh. Graphify does not repeat approval for each file; Copilot's native
 permissions still apply. A new task requires new approval.
 
-**Installer distinction:** `graphify copilot install --project` and
-`graphify vscode install` use the retained automatic hooks, which still require
-a graph. They share a hook file with the conditional installer; choose one
-integration per repository. See the
+Copilot CLI: activate the installed Python environment, change to your Java
+repository, and run `graphify copilot install --project`. The standard
+`graphify vscode install` command and the installer above now use the same
+conditional graph-first hooks. Reinstall after upgrading and restart the session.
+See the
 [conditional integration guide](docs/COPILOT_GRAPH_FIRST.md) and
 [automatic-hook guide](docs/COPILOT_AUTOMATIC.md) for setup and limitations.
 

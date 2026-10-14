@@ -181,16 +181,15 @@ def test_rejection_blocks_source_and_mutations(repo):
     assert (repo / "CancellationService.java").read_bytes() == before
 
 
-def test_missing_graph_requires_explicit_initial_skill(repo):
+def test_missing_graph_silently_preserves_native_workflow_and_manual_skill(repo):
     hooks.graph_path(repo).unlink()
     result = prompt(repo, "Explain cancellation")
-    assert "/repo-analyzer first" in result["systemMessage"]
-    tool(repo)
-    assert tool(repo, "bash", {"command": "graphify extract . --no-cluster"})["permissionDecision"] == "deny"
-    prompt(repo, "/repo-analyzer .")
-    tool(repo)
+    assert result == {}
+    assert tool(repo) == {}
+    assert tool(repo, "edit") == {}
+    assert prompt(repo, "/repo-analyzer .") == {}
     assert tool(repo, "skill", {"name": "repo-analyzer"}) == {}
-    assert tool(repo, "bash", {"command": "graphify extract . --no-cluster"})["permissionDecision"] == "ask"
+    assert tool(repo, "bash", {"command": "graphify extract . --no-cluster"}) == {}
     assert not hooks.graph_path(repo).exists()
 
 
@@ -288,7 +287,8 @@ def test_existing_api_documentation_still_uses_native_write_approval(repo):
 def test_no_prompt_cannot_authorize_graph_creation(repo):
     hooks.graph_path(repo).unlink()
     tool(repo)
-    assert tool(repo, "bash", {"command": "graphify update ."})["permissionDecision"] == "deny"
+    assert tool(repo, "bash", {"command": "graphify update ."}) == {}
+    assert not hooks.graph_path(repo).exists()
 
 
 def test_missing_session_pre_hook_returns_explicit_deny(repo):
@@ -305,7 +305,7 @@ def test_state_isolated_by_session_and_repository(repo):
     assert result["permissionDecision"] == "deny"
     other = repo.parent / "other"
     other.mkdir()
-    assert hooks.handle("pre", {"sessionId": "session", "toolName": "edit"}, other)["permissionDecision"] == "deny"
+    assert hooks.handle("pre", {"sessionId": "session", "toolName": "edit"}, other) == {}
 
 
 def test_hook_entrypoint_real_subprocess(repo):
@@ -364,3 +364,81 @@ def test_commands_quote_paths_and_do_not_interpolate_user_prompt(repo, monkeypat
     assert command["powershell"].startswith("& 'C:/Program Files/Python/python.exe'")
     assert "-m graphify.copilot_hooks prompt" in command["bash"]
     assert "$" not in command["powershell"]
+
+
+@pytest.mark.parametrize("surface", ["cli", "cli-project", "vscode", "dedicated-vscode"])
+@pytest.mark.parametrize("available", [True, False])
+def test_installed_hook_commands_query_graph_before_source_or_silently_skip(repo, monkeypatch, surface, available):
+    import shlex
+    from graphify.copilot import install as install_mcp
+    monkeypatch.chdir(repo)
+    if not available:
+        hooks.graph_path(repo).unlink()
+    for _ in range(2):
+        if surface == "cli":
+            installer.install(platform="copilot", project_dir=repo)
+        elif surface == "cli-project":
+            installer._project_install("copilot", repo)
+        elif surface == "vscode":
+            installer.vscode_install(repo)
+        else:
+            install_mcp(repo, "vscode")
+    config = json.loads((repo / integration.HOOK_FILE).read_text())
+    env = dict(os.environ, PYTHONPATH=str(Path(hooks.__file__).resolve().parent.parent))
+    outputs = []
+    for event, payload in [
+        ("userPromptSubmitted", {"sessionId": "installed", "prompt": "Explain cancelTransaction"}),
+        ("preToolUse", {"sessionId": "installed", "toolName": "view", "toolArgs": {"path": "CancellationService.java"}}),
+    ]:
+        entries = [entry for entry in config["hooks"][event] if integration._owned(entry)]
+        assert len(entries) == 1
+        proc = subprocess.run(shlex.split(entries[0]["bash"]), cwd=repo, env=env,
+            input=json.dumps(payload), text=True, capture_output=True, timeout=30)
+        assert proc.returncode == 0, proc.stderr
+        outputs.append(json.loads(proc.stdout))
+    if available:
+        # cancelTransaction exists only in graph.json, not in the Java fixture.
+        assert "CancellationService.cancelTransaction" in outputs[0]["systemMessage"]
+        assert str(hooks.graph_path(repo).resolve()) in outputs[0]["systemMessage"]
+        assert outputs[1]["permissionDecision"] == "deny"
+        assert "Queried existing graph" in outputs[1]["permissionDecisionReason"]
+    else:
+        assert outputs == [{}, {}]
+        assert not hooks.graph_path(repo).exists()
+
+
+def test_installer_migrates_old_hooks_without_duplicates_and_preserves_user_hooks(repo):
+    from graphify.copilot import install as install_mcp
+    path = repo / integration.HOOK_FILE
+    path.parent.mkdir(parents=True)
+    user = {"type": "command", "command": "echo user-hook"}
+    old = {"type": "command", "command": "python -m graphify.copilot hook --event PreToolUse"}
+    path.write_text(json.dumps({"hooks": {"PreToolUse": [user, old]}}))
+    instructions = repo / ".github/copilot-instructions.md"
+    instructions.write_text("Team rules.\n<!-- graphify-first:start -->\nOld conflicting policy.\n<!-- graphify-first:end -->\n")
+    for run in (install_mcp, integration.install, install_mcp):
+        run(repo, "vscode") if run is install_mcp else run(repo)
+    config = json.loads(path.read_text())
+    assert config["hooks"]["PreToolUse"] == [user]
+    assert "Old conflicting policy" not in instructions.read_text()
+    assert "Team rules." in instructions.read_text()
+    for event in integration.EVENTS:
+        assert sum(integration._owned(e) for e in config["hooks"][event]) == 1
+
+
+def test_missing_graph_does_not_query_scan_or_create_session_state(repo, monkeypatch):
+    hooks.graph_path(repo).unlink()
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Graphify ran without a graph")
+    monkeypatch.setattr(hooks, "_state_path", forbidden)
+    monkeypatch.setattr(hooks, "_source_signature", forbidden)
+    for event in ("prompt", "pre", "post", "transformed", "stop", "end"):
+        assert hooks.handle(event, {"prompt": "Fix cancellation"}, repo, query=forbidden) == {}
+
+
+def test_graph_deleted_during_session_restores_native_operations(repo):
+    prompt(repo, "Fix cancellation")
+    tool(repo)
+    hooks.graph_path(repo).unlink()
+    assert tool(repo, "edit") == {}
+    assert hooks.handle("stop", {"sessionId": "session"}, repo) == {}

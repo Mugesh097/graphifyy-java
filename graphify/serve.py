@@ -3107,6 +3107,16 @@ def _build_server(graph_path: str):
                 target = Path(_resolve_graph_path(project_path)).resolve()
                 if target.parent.name != _paths.GRAPHIFY_OUT or target.name != "graph.json":
                     raise ValueError("Auto-refresh requires the standard repository graph path")
+                if target.is_file() and name in {"repository_context", "analyze_change_impact"}:
+                    try:
+                        _select_graph(project_path)
+                        # Consult valid persisted evidence before freshness can
+                        # trigger Java extraction. Query again after refresh.
+                        repository_context(G, arguments["question"],
+                            impact=name == "analyze_change_impact" or arguments.get("impact", False),
+                            depth=arguments.get("depth", 3))
+                    except (FileNotFoundError, RuntimeError):
+                        pass  # Retain existing corrupt-graph recovery below.
                 status = ensure_graph(target.parent.parent, existing_only=True)
                 if status.get("available") is False:
                     return [types.TextContent(type="text", text=json.dumps({

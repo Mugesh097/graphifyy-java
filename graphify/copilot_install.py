@@ -12,7 +12,8 @@ EVENTS = {"userPromptSubmitted": "prompt", "userPromptTransformed": "transformed
 
 def _owned(entry: object) -> bool:
     return isinstance(entry, dict) and any(
-        "-m graphify.copilot_hooks " in str(entry.get(field, ""))
+        any(marker in str(entry.get(field, "")) for marker in
+            ("-m graphify.copilot_hooks ", "-m graphify.copilot hook "))
         for field in ("bash", "powershell", "command", "windows"))
 
 
@@ -50,10 +51,18 @@ def install(project_dir: Path) -> None:
     hooks = config.setdefault("hooks", {})
     for event, items in list(hooks.items()):
         hooks[event] = [entry for entry in items if not _owned(entry)]
+        if not hooks[event]:
+            del hooks[event]
     for event, handler in EVENTS.items():
         hooks.setdefault(event, []).append(_commands(handler, root))
     instructions = root / ".github/copilot-instructions.md"
     content = instructions.read_text(encoding="utf-8") if instructions.exists() else ""
+    begin, end = "<!-- graphify-first:start -->", "<!-- graphify-first:end -->"
+    while begin in content and end in content:
+        start, finish = content.index(begin), content.index(end) + len(end)
+        if finish <= start:
+            break
+        content = content[:start] + content[finish:]
     updated = _replace_or_append_section(content, "## graphify", _always_on("vscode-instructions"))
     path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(path, json.dumps(config, indent=2) + "\n")

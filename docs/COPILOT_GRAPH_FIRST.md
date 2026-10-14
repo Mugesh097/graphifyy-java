@@ -117,12 +117,19 @@ relevant source and the existing user-approval process before source edits.
 
 ## VS Code
 
+The dedicated and standard Copilot installers now share `graphify.copilot_hooks`
+through `graphify.copilot_install`. Old Graphify hook entries and instruction
+blocks are migrated while unrelated hooks and instructions are preserved.
+The adapter queries the existing graph, delivers its evidence and denies premature
+source tools. See [ordering validation](GRAPH_FIRST_WORKFLOW_AUDIT.md).
+
 Installation creates:
 
 - `.vscode/mcp.json`: existing Graphify stdio server with freshness enabled.
 - `.github/copilot-instructions.md`: repository-wide graph-first instructions.
 - `.github/agents/graphify.agent.md`: optional Graphify custom agent.
-- `.github/hooks/graphify.json`: **Local harness** hooks for prompt, pre-tool and stop.
+- `.github/hooks/graphify.json`: shared Copilot-compatible prompt, transformed-prompt,
+  pre-tool, post-tool, stop and session-end hooks, mapped by the Local harness.
 
 Open the target repository. Trust/start the MCP server using **MCP: List Servers**,
 enable Graphify tools, and use Copilot Agent mode. Ensure workspace hooks are
@@ -130,12 +137,14 @@ enabled/trusted and use the **Local** session target for these hook files.
 The Graphify custom agent makes the workflow explicit, but the repository
 instructions also apply in normal Agent sessions without a slash command.
 
-For each Local prompt with an existing graph, `UserPromptSubmit` queries the graph and records the
-question in a session-keyed sidecar. `PreToolUse` synchronizes again and injects
-graph context using the documented `additionalContext` output. It stops the
-session if the prompt hook did not run or graph preparation fails while a graph exists. `Stop`
-synchronizes actual Java changes, including changes made outside Copilot.
-These hooks do not approve tools, run tests or edit Java. The agent still selects
+For each prompt with an existing graph, the prompt hook queries persisted JSON
+and records the question/evidence in repository- and session-scoped temporary
+state. Transformed-prompt output or the first pre-tool denial delivers the
+evidence before source tools run. Explanation source tools remain denied;
+implementation tools request approval once for the plan. Existing stale evidence
+is labelled and refresh requires normal permissions. The Stop hook reminds the
+agent to test and refresh after changes instead of parsing Java before the query.
+These hooks do not grant an allow override, run tests or edit Java. The agent still selects
 implementation files and performs validation. Check the IDE hook output and MCP
 tool trace to confirm ordering. All hooks immediately allow native tools when
 the graph is missing, including if it is deleted during the session. Graph-first

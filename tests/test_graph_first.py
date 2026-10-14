@@ -79,6 +79,17 @@ def test_hook_order_and_sync(repo):
     assert "addonStatus" in (repo / "graphify-out/graph.json").read_text(encoding="utf-8")
 
 
+def test_legacy_prompt_queries_existing_graph_before_any_refresh(repo, monkeypatch):
+    ensure_graph(repo)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Java refresh occurred before graph query")
+    monkeypatch.setattr("graphify.graph_first.ensure_graph", forbidden)
+    result = hook(repo, "UserPromptSubmit", {"prompt": "Explain AddonService"})
+    assert result["continue"]
+    result = hook(repo, "PreToolUse", {})
+    assert "AddonService.java" in result["hookSpecificOutput"]["additionalContext"]
+
+
 def test_configuration_preserves_existing_and_is_idempotent(repo):
     config = repo / ".vscode/mcp.json"
     config.parent.mkdir()
@@ -86,8 +97,8 @@ def test_configuration_preserves_existing_and_is_idempotent(repo):
     install(repo, "vscode")
     install(repo, "vscode")
     assert "other" in json.loads(config.read_text())["servers"]
-    assert (repo / ".github/copilot-instructions.md").read_text().count("graphify-first:start") == 1
-    assert "PreToolUse" in json.loads((repo / ".github/hooks/graphify.json").read_text())["hooks"]
+    assert (repo / ".github/copilot-instructions.md").read_text().count("## graphify") == 1
+    assert "preToolUse" in json.loads((repo / ".github/hooks/graphify.json").read_text())["hooks"]
     install(repo, "intellij")
     assert "graphify" in json.loads((repo / "graphify-copilot-mcp.json").read_text())["servers"]
 
@@ -204,8 +215,9 @@ def test_reinstall_without_graph_preserves_native_permissions(repo, ide):
     install(repo, ide)
     assert instructions.read_text(encoding="utf-8") == first
     assert "Existing approval policy." in first
-    assert "silently skip Graphify" in first
-    assert "existing user-approval process" in first
+    normalized = " ".join(first.split())
+    assert "silently skip Graphify" in normalized
+    assert "once for" in normalized
     assert not (repo / "graphify-out").exists()
 
 

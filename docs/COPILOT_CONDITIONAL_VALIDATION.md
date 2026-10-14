@@ -1,5 +1,9 @@
 # Conditional Copilot graph-first validation — 2026-10-14
 
+This records the initial implementation. The current shared CLI/VS Code hooks,
+source-ordering fixes and branch validation are documented in
+[GRAPH_FIRST_WORKFLOW_AUDIT.md](GRAPH_FIRST_WORKFLOW_AUDIT.md).
+
 ## Findings and implementation
 
 The blocking integration was `graphify/copilot.py`: its instructions required

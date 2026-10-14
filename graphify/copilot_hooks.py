@@ -29,7 +29,8 @@ After that approval, carry out the scoped edits, tests and graph refresh without
 repeating Graphify approval questions. Native tool permissions still apply.
 Never interpret analysis permission as edit permission. On rejection stop without
 edits. After edits run graphify update for this repository under the approved plan
-and the host's normal permissions. The initial graph must be generated with /repo-analyzer. Stale graphs
+and the host's normal permissions. When graph.json is absent, silently use native
+Copilot tools and permissions without warnings or graph generation. Stale graphs
 require approval to refresh; never silently
 bypass the graph. Do not ask the user to type a Graphify query command.
 """
@@ -48,7 +49,8 @@ _SKIP = {".git", ".venv", "venv", "node_modules", "target", "build", "dist", "gr
 
 
 def graph_path(root: Path) -> Path:
-    return root / "graphify-out" / "graph.json"
+    from graphify.paths import GRAPHIFY_OUT
+    return root / GRAPHIFY_OUT / "graph.json"
 
 
 def _fingerprint(path: Path) -> list[int] | None:
@@ -100,7 +102,7 @@ def analyze(root: Path, question: str) -> dict:
     graph = graph_path(root)
     # This existence check is deliberately the first repository-analysis operation.
     if not graph.is_file():
-        return {"status": "missing", "evidence": "graphify-out/graph.json is missing. Run /repo-analyzer first to generate the initial graph (with write approval). After that, normal repository questions automatically query the graph."}
+        return {"status": "missing"}
     from graphify.security import check_graph_file_size_cap
     check_graph_file_size_cap(graph)
     raw = json.loads(graph.read_text(encoding="utf-8"))
@@ -120,7 +122,8 @@ def analyze(root: Path, question: str) -> dict:
     status = "stale" if stale else ("insufficient" if evidence == "No matching nodes found." else "ready")
     if stale:
         evidence = f"Graph is outdated: {stale}. Ask approval to run graphify update . before source access.\nPersisted (outdated) evidence:\n{evidence}"
-    return {"status": status, "evidence": evidence, "fingerprint": _fingerprint(graph),
+    evidence = f"Queried existing graph: {graph.resolve()}\n" + evidence
+    return {"status": status, "evidence": evidence, "graph_path": str(graph.resolve()), "fingerprint": _fingerprint(graph),
             "sources": _source_signature(root)}
 
 
@@ -225,6 +228,10 @@ def _graph_read_command(name: str, args: dict, root: Path, *, commands=None) -> 
 
 def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
     root = root.resolve()
+    # Availability precedes session-state checks and every permission gate.
+    # Missing graphs must not create state, scan Java files or interrupt Copilot.
+    if not graph_path(root).is_file():
+        return {}
     path = _state_path(root, payload)
     state = _read_state(path)
     if event == "end":
@@ -256,6 +263,9 @@ def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
         except Exception as exc:
             state.update(status="error", evidence=f"Graphify analysis failed: {exc}. Report this; do not bypass Graphify.")
         _save_state(path, state)
+        if not graph_path(root).is_file():
+            path.unlink(missing_ok=True)
+            return {}
         # Local supports systemMessage. CLI discards prompt-hook stdout; transformed,
         # pre-tool and stop hooks below deliver evidence via documented channels.
         return {"systemMessage": _context(state)}
@@ -372,6 +382,9 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=True))
         return 0
     except Exception as exc:
+        if not graph_path(options.root.resolve()).is_file():
+            print(json.dumps({"status": "missing"} if options.event == "analyze" else {}))
+            return 0
         message = f"Graphify hook failed: {exc}. Stop repository analysis and repair the integration."
         if options.event == "pre":
             print(json.dumps(_decision("deny", message)))

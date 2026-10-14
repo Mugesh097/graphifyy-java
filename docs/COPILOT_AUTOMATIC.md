@@ -24,9 +24,11 @@ Trust the workspace and enable hooks in the selected host. Restart the session.
 In VS Code select an Agent-capable session target and inspect the Hooks page.
 Copilot CLI users can inspect the installed hooks with `/hooks`.
 
-**Initial generation is mandatory:** invoke `/repo-analyzer .` and approve the
-graph-generation write. This existing skill runs the Java extraction pipeline.
-The hooks never generate the initial graph from an ordinary question.
+Graph generation is optional. If `graphify-out/graph.json` is absent, all hooks
+silently defer to native Copilot tools and permissions. Invoke `/repo-analyzer .`
+only when you choose to create a graph. Existing graphs are queried before Java
+source access. Both installers now use the same adapter; see the
+[workflow audit and migration checks](GRAPH_FIRST_WORKFLOW_AUDIT.md).
 
 After generation, use normal prompts:
 
@@ -48,6 +50,8 @@ and all other existing functionality remain available.
    checks `graphify-out/graph.json` first, then queries the existing Graphify engine
    with the actual user question, including graph callers/callees and API evidence.
    It does not open Java source contents or run a shell built from user input.
+   Returned evidence identifies the exact graph path queried; this automatic
+   query need not appear as a separate agent tool call.
 2. Repository/session-specific temporary state records the result and prompt. It
    records approval only for the current implementation task, after the host completes
    the matching operation that received Graphify's initial approval request. A new
@@ -84,8 +88,8 @@ the host's permission UI. Graph maintenance is an explicitly recognized, exact
 commands cannot masquerade as maintenance. Initial extraction additionally requires
 an explicit `/repo-analyzer` prompt.
 
-Missing, unreadable, corrupt, or timed-out graphs block repository tools and produce
-an actionable message. Missing graphs require `/repo-analyzer`; stale graphs require
+Missing graphs silently bypass Graphify. Unreadable, corrupt, or timed-out existing
+graphs block repository tools and produce an actionable message. Stale graphs require
 update approval. Stale persisted evidence is labeled as outdated. Freshness checks
 use the existing `needs_update` marker, Java file metadata and missing recorded paths,
 without reading source contents. In-turn metadata signatures detect new/deleted or
@@ -236,7 +240,7 @@ The earlier exact file transfer omitted `detect(..., java_inventory=True)` suppo
 needed by graph synchronization. This change restores that additive metadata-only
 mode; ordinary detection behavior remains unchanged. Graph-present and graph-absent
 conditional integration tests now pass on the combined branch. Retained CLI hooks
-still have their documented mandatory graph behavior.
+now also support the silent missing-graph fallback described above.
 
 All 50 generated artifacts passed `python -m tools.skillgen --check`.
 `graphify update .` completed with 42 nodes, 55 edges and 10 communities.
