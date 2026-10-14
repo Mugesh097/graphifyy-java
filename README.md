@@ -164,6 +164,13 @@ Existing graphs are synchronized through the Java incremental pipeline. Missing
 graphs bypass Graphify. Code changes retain the host's permissions and the
 existing user-approval process.
 
+Approval is requested once for the complete implementation plan, including its
+files, tests and graph refresh. Graphify does not repeat approval for each file.
+In the retained approval-hook adapter, a matching host-completed operation records
+approval for that task and subsequent tools use normal host permissions. A short
+continuation retains existing approval; a new task, rejection or session end
+resets it. Copilot may still prompt when its own permission settings require it.
+
 The dedicated installer replaces its hook file. The retained installer below uses
 the same filename with a different hook schema; select one integration for a
 repository and review any existing custom hooks before replacing that file.

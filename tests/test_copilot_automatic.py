@@ -88,6 +88,70 @@ def test_native_approval_never_inferred_from_tool_arguments(repo, name):
     assert "explicit approval" in result["permissionDecisionReason"]
 
 
+@pytest.mark.parametrize("host", ["cli", "vscode"])
+def test_one_approval_covers_multiple_files_tests_and_refresh(repo, host):
+    prompt(repo, "Fix cancellation", host)
+    tool(repo, host=host)  # deliver graph evidence first
+    assert tool(repo, host=host)["permissionDecision"] == "ask"
+    tool(repo, host=host, event="post")  # host completed the approved operation
+    for name, args in [
+        ("view", {"path": "Other.java"}),
+        ("grep", {"pattern": "cancel"}),
+        ("edit", {"path": "CancellationService.java"}),
+        ("apply_patch", {"path": "Other.java"}),
+        ("bash", {"command": "pytest"}),
+        ("mcp_custom_tool", {}),
+        ("bash", {"command": "graphify update ."}),
+    ]:
+        assert tool(repo, name, args, host) == {}
+
+
+def test_continuation_preserves_approval_but_new_task_resets_it(repo):
+    prompt(repo, "Fix cancellation")
+    tool(repo)
+    assert tool(repo)["permissionDecision"] == "ask"
+    tool(repo, event="post")
+    prompt(repo, "Continue")
+    tool(repo)
+    assert tool(repo, "edit") == {}
+    prompt(repo, "Add cancellation validation")
+    tool(repo)
+    assert tool(repo, "edit")["permissionDecision"] == "ask"
+
+
+def test_yes_without_host_completion_does_not_approve(repo):
+    prompt(repo, "Fix cancellation")
+    tool(repo)
+    tool(repo)
+    prompt(repo, "Yes")
+    tool(repo)
+    assert tool(repo, "edit")["permissionDecision"] == "ask"
+
+
+def test_unrelated_post_or_unapproved_tool_does_not_grant_approval(repo):
+    prompt(repo, "Fix cancellation")
+    tool(repo)
+    assert tool(repo)["permissionDecision"] == "ask"
+    tool(repo, "edit", event="post")
+    assert tool(repo, "edit")["permissionDecision"] == "ask"
+    # Denied/cancelled native asks have no matching completed post event.
+    assert tool(repo, "edit")["permissionDecision"] == "ask"
+
+
+def test_rejection_and_session_end_clear_existing_task_approval(repo):
+    prompt(repo, "Fix cancellation")
+    tool(repo)
+    tool(repo)
+    tool(repo, event="post")
+    prompt(repo, "No")
+    tool(repo)
+    assert tool(repo, "edit")["permissionDecision"] == "deny"
+    hooks.handle("end", {"sessionId": "session"}, repo)
+    prompt(repo, "Fix cancellation")
+    tool(repo)
+    assert tool(repo, "edit")["permissionDecision"] == "ask"
+
+
 @pytest.mark.parametrize("approve", [True, False])
 def test_host_permission_contract_only_executes_approved_edit(repo, approve):
     prompt(repo, "Fix cancellation")

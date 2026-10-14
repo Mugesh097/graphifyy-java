@@ -27,5 +27,8 @@ do not automatically prefer merged scope. Generate reviewable Java API reference
 from source audits and inference. Report missing graph evidence explicitly.
 
 For code changes, analyze graph dependencies and affected callers before inspecting
-source, and follow the existing user-approval process before editing. Update only
+source, and obtain approval once for the implementation plan before editing.
+Do not repeat Graphify approval for each file, planned test or graph refresh.
+Continue within the approved scope with native host permissions. A new task
+requires its own approval; rejection stops edits. Update only
 an existing graph after changes. Generate a graph only when explicitly requested.

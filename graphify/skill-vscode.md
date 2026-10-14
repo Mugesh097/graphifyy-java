@@ -16,7 +16,10 @@ whether graphify-out/graph.json exists. When present, automatically query the gr
 before reading Java source; use recorded classes, methods, APIs, dependencies and
 flows for explanations. For changes, analyze affected callers and dependencies
 before inspecting relevant source, and follow the existing user-approval process
-before editing. Refresh only an existing graph after approved changes.
+before editing. Obtain approval once for the complete implementation plan, not
+for each file, planned test or graph refresh. Continue within the approved scope
+with native host permissions. A new task requires its own approval; rejection
+stops edits. Refresh only an existing graph after approved changes.
 
 When absent, silently skip Graphify and use native Copilot tools and standard
 permissions to read, search, debug, explain, and modify Java source. Do not block,

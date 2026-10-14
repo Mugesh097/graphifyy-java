@@ -1221,7 +1221,7 @@ def _resolves_under_root(path: Path, root: Path) -> bool:
     return True
 
 
-def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace: bool | None = None, extra_excludes: list[str] | None = None, cache_root: Path | None = None, gitignore: bool = True) -> dict:
+def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace: bool | None = None, extra_excludes: list[str] | None = None, cache_root: Path | None = None, gitignore: bool = True, java_inventory: bool = False) -> dict:
     root = root.resolve()
     configured_out_dir = root / GRAPHIFY_OUT
     configured_out_names = {configured_out_dir.name}
@@ -1256,6 +1256,8 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
     total_words = 0
 
     def _wc(path: Path) -> int:
+        if java_inventory:
+            return 0  # Freshness checks enumerate/stat Java paths without reading source.
         # Cache word counts against each file's stat signature so unchanged
         # PDFs/docx aren't re-parsed on every run just to size the corpus (#1656).
         # cache_root (when given, e.g. from `extract --out`) keeps this cache out
@@ -1386,6 +1388,8 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
     converted_dir = root / GRAPHIFY_OUT / "converted"
 
     for p in all_files:
+        if java_inventory and p.suffix.lower() != ".java":
+            continue
         # For memory dir files, skip hidden/noise filtering
         in_memory = memory_dir.exists() and str(p).startswith(str(memory_dir))
         if not in_memory:

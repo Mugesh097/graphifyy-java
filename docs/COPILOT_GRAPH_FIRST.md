@@ -108,6 +108,9 @@ absent, Graphify is silently skipped: Copilot continues native source searches,
 explanations, debugging and changes with its standard tools and permissions.
 There is no generation, warning, `/repo-analyzer` suggestion or Graphify approval
 gate. Manual graph generation and `/repo-analyzer` commands remain available.
+Source changes request approval once for the complete implementation plan, not
+for every file, planned test or refresh. Subsequent operations stay within that
+scope and the host's own permissions; new tasks require new approval.
 When present, the graph is queried first and an existing current graph is loaded
 without regeneration. Changes require graph impact analysis before inspecting
 relevant source and the existing user-approval process before source edits.

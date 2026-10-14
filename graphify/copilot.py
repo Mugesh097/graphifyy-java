@@ -26,7 +26,11 @@ Do not invent runtime behavior from static edges. Expand graph queries when need
 After editing, review affected callers, run appropriate tests, then call refresh_graph
 only if the graph still exists, even if validation fails. Report
 validation failures. Preserve the existing /repo-analyzer documentation workflow.
-Before modifying source, follow the existing user-approval process. Manual graph
+Before modifying source, follow the existing user-approval process once for the
+implementation plan. Do not
+repeat Graphify approval for each file, planned test or graph refresh. Continue
+within the approved scope using native host permissions; a new task needs its own
+approval. Manual graph
 generation and /repo-analyzer commands remain available when explicitly requested.
 """
 
