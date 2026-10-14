@@ -357,8 +357,8 @@ def _render_core(platform: Platform) -> str:
     template = _read_fragment(f"core/{platform.core}.md")
 
     body = template.replace("@@FRONTMATTER@@", _render_frontmatter(platform))
-    if platform.key in ("copilot", "vscode"):
-        body = body.rstrip() + "\n\n" + _read_fragment("copilot-automatic.md")
+    if platform.key in {"copilot", "vscode"}:
+        body = body.replace("## Workflow", _read_fragment("core/copilot-availability.md") + "\n\n## Workflow")
     if "@@" in body:
         leftover = sorted(set(re.findall(r"@@\w+@@", body)))
         raise ValueError(f"unfilled core slots for '{platform.key}': {leftover}")
