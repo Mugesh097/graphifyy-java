@@ -75,3 +75,20 @@ The broad integration run passed 331 tests. All 50 generated artifacts matched
 their templates and snapshots. The required graph update completed successfully.
 The final instruction-block migration and installed/repeated-install checks passed
 16 tests after the migration adjustment; this overlaps the broader run.
+
+## Current-repository resolution
+
+Hooks now resolve the repository from the host-supplied `cwd`, using the installation
+path only when the host does not supply a current directory. From a subdirectory,
+they locate the repository graph without reading Java source. A nested Git root
+(including a worktree `.git` file) stops traversal so an unrelated outer graph
+cannot replace a missing graph in the current repository. Session and approval
+state remains isolated by the resolved repository.
+
+The follow-up run of automatic-hook, graph-first, installation and generated-skill
+regressions passed **162 tests**. It includes CLI and VS Code explanation, debugging
+and modification prompts using a different current repository from the saved
+installation path; every lifecycle hook bypassing an absent current graph even
+when the old repository has one; subdirectory and nested-repository boundaries;
+and real hook subprocesses with present and absent graphs. No slash command is
+used for these normal prompts.

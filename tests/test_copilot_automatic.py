@@ -442,3 +442,60 @@ def test_graph_deleted_during_session_restores_native_operations(repo):
     hooks.graph_path(repo).unlink()
     assert tool(repo, "edit") == {}
     assert hooks.handle("stop", {"sessionId": "session"}, repo) == {}
+
+
+@pytest.mark.parametrize("host", ["cli", "vscode"])
+@pytest.mark.parametrize("question", ["Explain cancellation", "Debug cancellation", "Modify cancellation"])
+def test_current_repository_graph_wins_over_installation_path(repo, host, question):
+    configured = repo.parent / "previous-repository"
+    configured.mkdir()
+    key = "sessionId" if host == "cli" else "session_id"
+    observed = []
+    def query(root, prompt):
+        observed.append(root)
+        return hooks.analyze(root, prompt)
+    result = hooks.handle("prompt", {key: "current", "cwd": str(repo), "prompt": question},
+                          configured, query=query)
+    assert observed == [repo]
+    assert str(hooks.graph_path(repo)) in result["systemMessage"]
+    assert "CancellationService.cancelTransaction" in result["systemMessage"]
+
+
+@pytest.mark.parametrize("event", ["prompt", "transformed", "pre", "post", "stop", "end"])
+def test_current_repository_without_graph_ignores_old_repository_graph(repo, event):
+    current = repo.parent / "current-repository"
+    current.mkdir()
+    (current / ".git").write_text("gitdir: elsewhere")
+    def forbidden(*args):
+        raise AssertionError("Queried the old repository instead of skipping Graphify")
+    assert hooks.handle(event, {"cwd": str(current), "prompt": "Explain cancellation"},
+                        repo, query=forbidden) == {}
+    assert not hooks.graph_path(current).exists()
+
+
+def test_subdirectory_uses_repository_graph_and_nested_repo_does_not_inherit_it(repo):
+    nested = repo / "src/main/java"
+    nested.mkdir(parents=True)
+    assert hooks._repository_root(repo, {"cwd": str(nested)}) == repo
+    separate = repo / "nested-repository"
+    separate.mkdir()
+    (separate / ".git").mkdir()
+    assert hooks._repository_root(repo, {"cwd": str(separate)}) == separate
+    assert hooks.handle("pre", {"cwd": str(separate)}, repo) == {}
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_hook_entrypoint_resolves_host_repository_before_availability_check(repo, available):
+    configured = repo.parent / "previous-repository"
+    configured.mkdir()
+    if not available:
+        hooks.graph_path(repo).unlink()
+    proc = subprocess.run([sys.executable, "-m", "graphify.copilot_hooks", "prompt",
+        "--root", str(configured)], input=json.dumps({"session_id": "host-current",
+        "cwd": str(repo), "prompt": "Explain cancellation"}), text=True,
+        capture_output=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert ("Queried existing graph" in result.get("systemMessage", "")) is available
+    if not available:
+        assert result == {}

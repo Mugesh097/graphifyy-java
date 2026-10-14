@@ -53,6 +53,24 @@ def graph_path(root: Path) -> Path:
     return root / GRAPHIFY_OUT / "graph.json"
 
 
+def _repository_root(configured_root: Path, payload: dict) -> Path:
+    """Use the host's current repository, without searching Java source files."""
+    configured_root = configured_root.resolve()
+    cwd = payload.get("cwd")
+    if not isinstance(cwd, str) or not cwd.strip():
+        return configured_root
+    current = Path(cwd)
+    current = (current if current.is_absolute() else configured_root / current).resolve()
+    # Work from subdirectories too, but never inherit an outer repository's
+    # graph across a Git root (including worktrees whose .git is a file).
+    for candidate in (current, *current.parents):
+        if graph_path(candidate).is_file():
+            return candidate
+        if (candidate / ".git").exists() or candidate == configured_root:
+            return candidate
+    return current
+
+
 def _fingerprint(path: Path) -> list[int] | None:
     try:
         st = path.stat()
@@ -227,7 +245,7 @@ def _graph_read_command(name: str, args: dict, root: Path, *, commands=None) -> 
 
 
 def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
-    root = root.resolve()
+    root = _repository_root(root, payload)
     # Availability precedes session-state checks and every permission gate.
     # Missing graphs must not create state, scan Java files or interrupt Copilot.
     if not graph_path(root).is_file():
@@ -373,16 +391,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("event", choices=["prompt", "transformed", "pre", "post", "stop", "end", "analyze"])
     parser.add_argument("--root", type=Path, default=Path.cwd())
     options = parser.parse_args(argv)
+    root = options.root.resolve()
     try:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             raise ValueError("hook input must be an object")
-        result = (analyze(options.root.resolve(), payload["prompt"]) if options.event == "analyze"
-                  else handle(options.event, payload, options.root))
+        root = _repository_root(root, payload)
+        result = (analyze(root, payload["prompt"]) if options.event == "analyze"
+                  else handle(options.event, payload, root))
         print(json.dumps(result, ensure_ascii=True))
         return 0
     except Exception as exc:
-        if not graph_path(options.root.resolve()).is_file():
+        if not graph_path(root).is_file():
             print(json.dumps({"status": "missing"} if options.event == "analyze" else {}))
             return 0
         message = f"Graphify hook failed: {exc}. Stop repository analysis and repair the integration."
