@@ -14,16 +14,20 @@ After installing this branch, run `graphify copilot install` (or `graphify vscod
 
 Install in your Java repository using `graphify copilot install --project` or
 `graphify vscode install`, then restart Copilot with hooks enabled and the workspace
-trusted. **Run `/repo-analyzer .` once to generate the initial graph.** After that,
+trusted. If `graphify-out/graph.json` exists, Graphify queries it automatically. If
+it is absent, Graphify silently defers to native Copilot without graph generation.
 ask ordinary questions such as "Explain future transaction cancellation handling."
 The prompt hook queries `graphify-out/graph.json` automatically; no manual query
 or slash command is needed for subsequent questions.
 
 Explanations use graph evidence. Modifications require a proposed impact/change
 plan and your explicit approval before targeted source inspection and edits.
-Missing graphs require the initial `/repo-analyzer` step; stale graphs require
+Approve the agreed implementation scope once per request; new requests need new
+approval and Copilot's mandatory permissions still apply. Stale graphs require
 approval to refresh. Existing CLI commands, skills and API documentation remain
 available. See [installation, enforcement limits, architecture review and tests](docs/COPILOT_AUTOMATIC.md).
+See [the three-change implementation report](docs/COPILOT_SCOPED_APPROVAL.md) for
+managed instruction updates and verification steps.
 
 ## Priorities and guarantees
 

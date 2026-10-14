@@ -892,21 +892,8 @@ def vscode_install(project_dir: Path | None = None) -> None:
     print(f"  skill installed  ->  {skill_dst}")
     _retire_legacy_skill(skill_dst)
 
-    instructions = (project_dir or Path(".")) / ".github" / "copilot-instructions.md"
-    instructions.parent.mkdir(parents=True, exist_ok=True)
-    if instructions.exists():
-        content = instructions.read_text(encoding="utf-8")
-        new_content = _replace_or_append_section(
-            content, _VSCODE_INSTRUCTIONS_MARKER, _always_on("vscode-instructions")
-        )
-        if new_content == content:
-            print(f"  {instructions}  ->  already configured (no change)")
-        else:
-            instructions.write_text(new_content, encoding="utf-8")
-            print(f"  {instructions}  ->  graphify section {'updated' if _VSCODE_INSTRUCTIONS_MARKER in content else 'added'}")
-    else:
-        instructions.write_text(_always_on("vscode-instructions"), encoding="utf-8")
-        print(f"  {instructions}  ->  created")
+    # The shared automatic installer above owns the marked instruction update.
+    # A second writer would overwrite its markers and report a misleading no-op.
 
     print()
     print(

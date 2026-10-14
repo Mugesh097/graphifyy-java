@@ -1,11 +1,15 @@
 """Idempotent repository-scoped hook installation shared by Copilot hosts."""
 from __future__ import annotations
 import json
+import re
 from pathlib import Path
 import shlex
 import sys
 
 HOOK_FILE = Path(".github/hooks/graphify.json")
+INSTRUCTION_START = "<!-- graphify:start -->"
+INSTRUCTION_END = "<!-- graphify:end -->"
+_MANAGED_PATTERN = re.compile(r"^" + re.escape(INSTRUCTION_START) + r"[ \t]*\r?\n.*?^" + re.escape(INSTRUCTION_END) + r"[ \t]*(?:\r?\n|$)", re.M | re.S)
 EVENTS = {"userPromptSubmitted": "prompt", "userPromptTransformed": "transformed",
           "preToolUse": "pre", "postToolUse": "post", "agentStop": "stop", "sessionEnd": "end"}
 
@@ -41,7 +45,7 @@ def _commands(event: str, root: Path) -> dict:
 
 
 def install(project_dir: Path) -> None:
-    from graphify.install import _always_on, _replace_or_append_section
+    from graphify.install import _always_on
     from graphify.paths import write_text_atomic
     root = project_dir.resolve()
     path = root / HOOK_FILE
@@ -54,12 +58,22 @@ def install(project_dir: Path) -> None:
         hooks.setdefault(event, []).append(_commands(handler, root))
     instructions = root / ".github/copilot-instructions.md"
     content = instructions.read_text(encoding="utf-8") if instructions.exists() else ""
-    updated = _replace_or_append_section(content, "## graphify", _always_on("vscode-instructions"))
+    block = INSTRUCTION_START + "\n" + _always_on("vscode-instructions").strip() + "\n" + INSTRUCTION_END + "\n"
+    retained = _without_graphify_instructions(content)
+    matches = list(_MANAGED_PATTERN.finditer(content))
+    if len(matches) == 1 and retained == _MANAGED_PATTERN.sub("", content):
+        match = matches[0]
+        updated = content[:match.start()] + block + content[match.end():]
+    else:
+        updated = (retained.rstrip() + "\n\n" if retained.strip() else "") + block
     path.parent.mkdir(parents=True, exist_ok=True)
     write_text_atomic(path, json.dumps(config, indent=2) + "\n")
-    write_text_atomic(instructions, updated)
+    if updated != content:
+        write_text_atomic(instructions, updated)
+        print(f"  repo instructions -> {instructions} ({'updated' if content else 'created'})")
+    else:
+        print(f"  repo instructions -> {instructions} (already up to date)")
     print(f"  automatic hooks  ->  {path} (prompt, context, tool approval, stop, cleanup)")
-    print(f"  repo instructions -> {instructions} (Graphify section updated)")
     print("  Restart Copilot in this trusted repository. Hooks must be enabled.")
     print("  Copilot CLI/Agent Host: prompt query + transformed evidence + native tool approval.")
     print("  VS Code Local Agent: prompt query + first-tool/stop evidence + native tool approval.")
@@ -67,7 +81,6 @@ def install(project_dir: Path) -> None:
 
 
 def uninstall(project_dir: Path) -> None:
-    from graphify.install import _remove_marker_section
     from graphify.paths import write_text_atomic
     root = project_dir.resolve()
     path = root / HOOK_FILE
@@ -91,9 +104,38 @@ def uninstall(project_dir: Path) -> None:
             print(f"  automatic hooks removed -> {path}")
     instructions = root / ".github/copilot-instructions.md"
     if instructions.exists():
-        cleaned = _remove_marker_section(instructions.read_text(encoding="utf-8"), "## graphify")
-        if cleaned is not None:
+        original = instructions.read_text(encoding="utf-8")
+        cleaned = _without_graphify_instructions(original)
+        if cleaned != original:
             if cleaned:
                 write_text_atomic(instructions, cleaned + "\n")
             else:
                 instructions.unlink()
+
+
+def _without_graphify_instructions(content: str) -> str:
+    """Remove complete owned blocks and migrate legacy exact H2 sections only."""
+    starts = re.findall(r"(?m)^" + re.escape(INSTRUCTION_START) + r"[ \t]*\r?$", content)
+    ends = re.findall(r"(?m)^" + re.escape(INSTRUCTION_END) + r"[ \t]*\r?$", content)
+    if len(starts) != len(ends):
+        raise ValueError("Unbalanced Graphify instruction markers; file left untouched")
+    for match in _MANAGED_PATTERN.finditer(content):
+        if INSTRUCTION_START in match.group()[len(INSTRUCTION_START):]:
+            raise ValueError("Nested Graphify instruction markers; file left untouched")
+    content = _MANAGED_PATTERN.sub("", content)
+    if re.search(r"(?m)^" + re.escape(INSTRUCTION_START) + r"[ \t]*\r?$", content) or re.search(r"(?m)^" + re.escape(INSTRUCTION_END) + r"[ \t]*\r?$", content):
+        raise ValueError("Invalid Graphify instruction markers; file left untouched")
+    retained, skipping, fence = [], False, None
+    for line in content.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped.startswith(("```", "~~~")):
+            marker = stripped[:3]
+            fence = None if fence == marker else (marker if fence is None else fence)
+        elif fence is None:
+            if re.fullmatch(r"[ \t]*##[ \t]+graphify[ \t]*", line.rstrip("\r\n")):
+                skipping = True
+            elif re.match(r"^#{1,2}[ \t]+", line):
+                skipping = False
+        if not skipping:
+            retained.append(line)
+    return "".join(retained)

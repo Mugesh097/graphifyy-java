@@ -24,9 +24,12 @@ Trust the workspace and enable hooks in the selected host. Restart the session.
 In VS Code select an Agent-capable session target and inspect the Hooks page.
 Copilot CLI users can inspect the installed hooks with `/hooks`.
 
-**Initial generation is mandatory:** invoke `/repo-analyzer .` and approve the
-graph-generation write. This existing skill runs the Java extraction pipeline.
-The hooks never generate the initial graph from an ordinary question.
+Initial graph generation is optional. If the graph is absent, all hooks silently
+defer to normal Copilot. Explicit `/repo-analyzer .` requests retain the existing
+Java extraction workflow. The hooks never generate a graph from an ordinary
+question. Approval is requested once per scoped implementation request; new
+requests require new approval and native permissions remain in effect. See the
+[implementation report](COPILOT_SCOPED_APPROVAL.md) for current details.
 
 After generation, use normal prompts:
 
@@ -74,8 +77,8 @@ the host's permission UI. Graph maintenance is an explicitly recognized, exact
 commands cannot masquerade as maintenance. Initial extraction additionally requires
 an explicit `/repo-analyzer` prompt.
 
-Missing, unreadable, corrupt, or timed-out graphs block repository tools and produce
-an actionable message. Missing graphs require `/repo-analyzer`; stale graphs require
+Missing graphs bypass Graphify without warnings or permission gates. Unreadable,
+corrupt or timed-out existing graphs produce an actionable error. Stale graphs require
 update approval. Stale persisted evidence is labeled as outdated. Freshness checks
 use the existing `needs_update` marker, Java file metadata and missing recorded paths,
 without reading source contents. In-turn metadata signatures detect new/deleted or
@@ -144,7 +147,9 @@ Reference contracts checked during implementation:
 ## Installation safety and removal
 
 The installer updates only Graphify-owned command entries and the exact `## graphify`
-instruction section. Other hooks, custom keys and instruction sections remain.
+legacy instruction section or its `<!-- graphify:start -->` / `<!-- graphify:end -->`
+managed replacement. Old and duplicate sections migrate safely; other hooks,
+custom keys and instruction sections remain. Latest content reports `already up to date`.
 Repeated installation refreshes paths/instructions without duplicate hooks. Malformed
 or unsupported hook JSON is rejected rather than overwritten. The existing skill
 upgrade/backup behavior is retained. Other hosts and their hook guards are unchanged.

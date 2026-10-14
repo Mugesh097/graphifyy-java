@@ -117,16 +117,15 @@ def test_rejection_blocks_source_and_mutations(repo):
     assert (repo / "CancellationService.java").read_bytes() == before
 
 
-def test_missing_graph_requires_explicit_initial_skill(repo):
+def test_missing_graph_silently_preserves_native_tools_and_manual_skill(repo):
     hooks.graph_path(repo).unlink()
     result = prompt(repo, "Explain cancellation")
-    assert "/repo-analyzer first" in result["systemMessage"]
-    tool(repo)
-    assert tool(repo, "bash", {"command": "graphify extract . --no-cluster"})["permissionDecision"] == "deny"
-    prompt(repo, "/repo-analyzer .")
-    tool(repo)
+    assert result == {}
+    assert tool(repo) == {}
+    assert tool(repo, "edit") == {}
+    assert prompt(repo, "/repo-analyzer .") == {}
     assert tool(repo, "skill", {"name": "repo-analyzer"}) == {}
-    assert tool(repo, "bash", {"command": "graphify extract . --no-cluster"})["permissionDecision"] == "ask"
+    assert tool(repo, "bash", {"command": "graphify extract . --no-cluster"}) == {}
     assert not hooks.graph_path(repo).exists()
 
 
@@ -224,7 +223,7 @@ def test_existing_api_documentation_still_uses_native_write_approval(repo):
 def test_no_prompt_cannot_authorize_graph_creation(repo):
     hooks.graph_path(repo).unlink()
     tool(repo)
-    assert tool(repo, "bash", {"command": "graphify update ."})["permissionDecision"] == "deny"
+    assert tool(repo, "bash", {"command": "graphify update ."}) == {}
 
 
 def test_missing_session_pre_hook_returns_explicit_deny(repo):
@@ -241,7 +240,7 @@ def test_state_isolated_by_session_and_repository(repo):
     assert result["permissionDecision"] == "deny"
     other = repo.parent / "other"
     other.mkdir()
-    assert hooks.handle("pre", {"sessionId": "session", "toolName": "edit"}, other)["permissionDecision"] == "deny"
+    assert hooks.handle("pre", {"sessionId": "session", "toolName": "edit"}, other) == {}
 
 
 def test_hook_entrypoint_real_subprocess(repo):
@@ -300,3 +299,71 @@ def test_commands_quote_paths_and_do_not_interpolate_user_prompt(repo, monkeypat
     assert command["powershell"].startswith("& 'C:/Program Files/Python/python.exe'")
     assert "-m graphify.copilot_hooks prompt" in command["bash"]
     assert "$" not in command["powershell"]
+
+
+@pytest.mark.parametrize("host", ["cli", "vscode"])
+def test_one_permission_for_request_and_new_request_resets(repo, host):
+    prompt(repo, "Fix cancellation", host)
+    tool(repo, host=host)
+    assert tool(repo, "edit", host=host)["permissionDecision"] == "ask"
+    tool(repo, "edit", host=host, event="post")
+    for name, args in [("edit", {"path": "Other.java"}), ("view", {"path": "Other.java"}),
+                       ("bash", {"command": "pytest"}), ("bash", {"command": "graphify update ."})]:
+        assert tool(repo, name, args, host) == {}
+    prompt(repo, "Continue", host)
+    tool(repo, host=host)
+    assert tool(repo, "edit", host=host) == {}
+    prompt(repo, "Add cancellation validation", host)
+    tool(repo, host=host)
+    assert tool(repo, "edit", host=host)["permissionDecision"] == "ask"
+
+
+def test_permission_cannot_be_created_by_yes_unmatched_or_failed_post(repo):
+    prompt(repo, "Fix cancellation")
+    tool(repo)
+    tool(repo, "edit")
+    tool(repo, "view", event="post")
+    assert tool(repo, "edit")["permissionDecision"] == "ask"
+    hooks.handle("post", {"sessionId": "session", "toolName": "edit",
+        "toolArgs": {"path": "CancellationService.java"}, "toolResult": {"resultType": "failure"}}, repo)
+    assert tool(repo, "edit")["permissionDecision"] == "ask"
+    prompt(repo, "Yes")
+    tool(repo)
+    assert tool(repo, "edit")["permissionDecision"] == "ask"
+
+
+@pytest.mark.parametrize("event", ["prompt", "transformed", "pre", "post", "stop", "end"])
+def test_missing_graph_never_queries_scans_or_creates_state(repo, monkeypatch, event):
+    hooks.graph_path(repo).unlink()
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Graphify ran without a graph")
+    monkeypatch.setattr(hooks, "_state_path", forbidden)
+    monkeypatch.setattr(hooks, "_source_signature", forbidden)
+    assert hooks.handle(event, {"prompt": "Fix cancellation"}, repo, query=forbidden) == {}
+
+
+@pytest.mark.parametrize("host", ["cli", "vscode"])
+@pytest.mark.parametrize("available", [True, False])
+def test_actual_registered_launcher_queries_graph_or_defers_natively(repo, host, available):
+    import shlex
+    if not available:
+        hooks.graph_path(repo).unlink()
+    integration.install(repo)
+    config = json.loads((repo / integration.HOOK_FILE).read_text())
+    key = "sessionId" if host == "cli" else "session_id"
+    payloads = [("userPromptSubmitted", {key: "installed", "prompt": "Explain cancelTransaction"}),
+                ("preToolUse", {key: "installed", **({"toolName": "grep", "toolArgs": {"pattern": "cancel"}}
+                    if host == "cli" else {"tool_name": "grep_search", "tool_input": {"query": "cancel"}})})]
+    outputs = []
+    for event, payload in payloads:
+        entry = next(e for e in config["hooks"][event] if integration._owned(e))
+        proc = subprocess.run(shlex.split(entry["bash"]), cwd=repo, input=json.dumps(payload),
+            capture_output=True, text=True, timeout=30)
+        assert proc.returncode == 0, proc.stderr
+        outputs.append(json.loads(proc.stdout))
+    if available:
+        assert "CancellationService.cancelTransaction" in outputs[0]["systemMessage"]
+        assert outputs[1]["permissionDecision"] == "deny"
+    else:
+        assert outputs == [{}, {}]
+        assert not hooks.graph_path(repo).exists()
