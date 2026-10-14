@@ -10,6 +10,21 @@ The agent skill is now **repo-analyzer**: use `/repo-analyzer` in agent chat. Te
 
 After installing this branch, run `graphify copilot install` (or `graphify vscode install`) and restart the agent session. The skill is installed under `skills/repo-analyzer/SKILL.md`. A stamped legacy sibling skill is disabled by renaming its entrypoint to `SKILL.md.graphify-backup`; its contents and references remain recoverable. Unstamped/custom installs and existing backups are left untouched with a notice. Other scopes and manually installed old command/workflow files may still expose `/graphify`; review those explicitly rather than deleting unrelated files.
 
+## Automatic Copilot graph-first workflow
+
+Install in your Java repository using `graphify copilot install --project` or
+`graphify vscode install`, then restart Copilot with hooks enabled and the workspace
+trusted. **Run `/repo-analyzer .` once to generate the initial graph.** After that,
+ask ordinary questions such as "Explain future transaction cancellation handling."
+The prompt hook queries `graphify-out/graph.json` automatically; no manual query
+or slash command is needed for subsequent questions.
+
+Explanations use graph evidence. Modifications require a proposed impact/change
+plan and your explicit approval before targeted source inspection and edits.
+Missing graphs require the initial `/repo-analyzer` step; stale graphs require
+approval to refresh. Existing CLI commands, skills and API documentation remain
+available. See [installation, enforcement limits, architecture review and tests](docs/COPILOT_AUTOMATIC.md).
+
 ## Priorities and guarantees
 
 1. Preserve Java syntax evidence and resolve call targets conservatively.

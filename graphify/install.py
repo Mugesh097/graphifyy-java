@@ -258,6 +258,9 @@ def _copy_skill_file(platform_name: str, *, project: bool = False, project_dir: 
 def _remove_skill_file(platform_name: str, *, project: bool = False, project_dir: Path | None = None) -> bool:
     """Remove a platform skill file and its version stamp without touching other scopes."""
     skill_dst = _platform_skill_destination(platform_name, project=project, project_dir=project_dir)
+    if platform_name == "copilot":
+        from graphify.copilot_install import uninstall as uninstall_automatic
+        uninstall_automatic(project_dir or Path("."))
     removed = False
     if skill_dst.exists():
         skill_dst.unlink()
@@ -635,6 +638,9 @@ def install(platform: str = "claude", *, project: bool = False, project_dir: Pat
     cfg = _PLATFORM_CONFIG[platform]
     project_dir = project_dir or Path(".")
     skill_dst = _copy_skill_file(platform, project=project, project_dir=project_dir)
+    if platform == "copilot":
+        from graphify.copilot_install import install as install_automatic
+        install_automatic(project_dir)
 
     if platform == "kilo":
         # Kilo Code also supports a native /repo-analyzer command file.
@@ -854,6 +860,8 @@ def gemini_uninstall(project_dir: Path | None = None, *, project: bool = False, 
 _VSCODE_INSTRUCTIONS_MARKER = "## graphify"
 def vscode_install(project_dir: Path | None = None) -> None:
     """Install graphify skill for VS Code Copilot Chat + write .github/copilot-instructions.md."""
+    from graphify.copilot_install import install as install_automatic
+    install_automatic(project_dir or Path("."))
     skill_src = Path(__file__).parent / "skill-vscode.md"
     refs_bundle = "vscode"
     if not skill_src.exists():
@@ -902,11 +910,13 @@ def vscode_install(project_dir: Path | None = None) -> None:
 
     print()
     print(
-        "VS Code Copilot Chat configured. Type /repo-analyzer in the chat panel to build the graph."
+        "VS Code Copilot configured for automatic graph-first questions. /repo-analyzer remains available."
     )
     print("Note: for GitHub Copilot CLI (terminal), use: graphify copilot install")
 def vscode_uninstall(project_dir: Path | None = None) -> None:
     """Remove graphify VS Code Copilot Chat skill and .github/copilot-instructions.md section."""
+    from graphify.copilot_install import uninstall as uninstall_automatic
+    uninstall_automatic(project_dir or Path("."))
     skill_dst = Path.home() / ".copilot" / "skills" / "repo-analyzer" / "SKILL.md"
     if skill_dst.exists():
         skill_dst.unlink()
@@ -1608,6 +1618,9 @@ def _project_install(platform_name: str, project_dir: Path | None = None, strict
         # Skill-only project install: drop SKILL.md (+ references) at the scope
         # root. `agents` -> ./.agents/skills/repo-analyzer/SKILL.md.
         skill_dst = _copy_skill_file(platform_name, project=True, project_dir=project_dir)
+        if platform_name == "copilot":
+            from graphify.copilot_install import install as install_automatic
+            install_automatic(project_dir)
         _print_project_git_add_hint([_project_scope_root(skill_dst, project_dir)])
     else:
         install(platform=platform_name, project=True, project_dir=project_dir)
