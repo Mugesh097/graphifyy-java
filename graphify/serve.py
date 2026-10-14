@@ -2555,28 +2555,6 @@ def _build_server(graph_path: str):
     async def list_tools() -> list[types.Tool]:
         _tools = [
             types.Tool(
-                name="repository_context",
-                description="FIRST step for every repository question, debugging or change request. Ensures a current Java graph and returns evidence plus candidate source paths before source exploration.",
-                inputSchema={"type": "object", "properties": {
-                    "question": {"type": "string"},
-                    "impact": {"type": "boolean", "default": False},
-                    "depth": {"type": "integer", "minimum": 1, "maximum": 6}},
-                    "required": ["question"]},
-            ),
-            types.Tool(
-                name="analyze_change_impact",
-                description="Graph-first candidate files and dependency evidence before editing code. Does not edit source.",
-                inputSchema={"type": "object", "properties": {
-                    "question": {"type": "string"},
-                    "depth": {"type": "integer", "minimum": 1, "maximum": 6}},
-                    "required": ["question"]},
-            ),
-            types.Tool(
-                name="refresh_graph",
-                description="Synchronize Java graph after edits and validation using the existing incremental AST rebuild. No LLM cost.",
-                inputSchema={"type": "object", "properties": {}},
-            ),
-            types.Tool(
                 name="query_graph",
                 description="Search the knowledge graph using BFS or DFS. Returns relevant nodes and edges as text context.",
                 inputSchema={
@@ -3096,40 +3074,11 @@ def _build_server(graph_path: str):
     async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         arguments = dict(arguments or {})
         project_path = arguments.pop("project_path", None)
-        graph_first_tools = {"repository_context", "analyze_change_impact", "refresh_graph"}
         handler = _handlers.get(name)
-        if not handler and name not in graph_first_tools:
+        if not handler:
             return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
         try:
-            status = None
-            if name in graph_first_tools or os.environ.get("GRAPHIFY_GRAPH_FIRST") == "1":
-                from graphify.graph_first import ensure_graph, repository_context
-                target = Path(_resolve_graph_path(project_path)).resolve()
-                if target.parent.name != _paths.GRAPHIFY_OUT or target.name != "graph.json":
-                    raise ValueError("Auto-refresh requires the standard repository graph path")
-                if target.is_file() and name in {"repository_context", "analyze_change_impact"}:
-                    try:
-                        _select_graph(project_path)
-                        # Consult valid persisted evidence before freshness can
-                        # trigger Java extraction. Query again after refresh.
-                        repository_context(G, arguments["question"],
-                            impact=name == "analyze_change_impact" or arguments.get("impact", False),
-                            depth=arguments.get("depth", 3))
-                    except (FileNotFoundError, RuntimeError):
-                        pass  # Retain existing corrupt-graph recovery below.
-                status = ensure_graph(target.parent.parent, existing_only=True)
-                if status.get("available") is False:
-                    return [types.TextContent(type="text", text=json.dumps({
-                        "available": False, "continue_native": True}))]
             _select_graph(project_path)  # bind G/communities to the target graph
-            if name == "refresh_graph":
-                return [types.TextContent(type="text", text=json.dumps(status))]
-            if name in {"repository_context", "analyze_change_impact"}:
-                result = repository_context(G, arguments["question"],
-                    impact=name == "analyze_change_impact" or arguments.get("impact", False),
-                    depth=arguments.get("depth", 3))
-                result["synchronization"] = status
-                return [types.TextContent(type="text", text=json.dumps(result))]
             return [types.TextContent(type="text", text=handler(arguments))]
         except Exception as exc:
             return [types.TextContent(type="text", text=f"Error executing {name}: {exc}")]

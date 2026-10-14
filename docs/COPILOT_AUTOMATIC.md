@@ -24,11 +24,9 @@ Trust the workspace and enable hooks in the selected host. Restart the session.
 In VS Code select an Agent-capable session target and inspect the Hooks page.
 Copilot CLI users can inspect the installed hooks with `/hooks`.
 
-Graph generation is optional. If `graphify-out/graph.json` is absent, all hooks
-silently defer to native Copilot tools and permissions. Invoke `/repo-analyzer .`
-only when you choose to create a graph. Existing graphs are queried before Java
-source access. Both installers now use the same adapter; see the
-[workflow audit and migration checks](GRAPH_FIRST_WORKFLOW_AUDIT.md).
+**Initial generation is mandatory:** invoke `/repo-analyzer .` and approve the
+graph-generation write. This existing skill runs the Java extraction pipeline.
+The hooks never generate the initial graph from an ordinary question.
 
 After generation, use normal prompts:
 
@@ -50,12 +48,8 @@ and all other existing functionality remain available.
    checks `graphify-out/graph.json` first, then queries the existing Graphify engine
    with the actual user question, including graph callers/callees and API evidence.
    It does not open Java source contents or run a shell built from user input.
-   Returned evidence identifies the exact graph path queried; this automatic
-   query need not appear as a separate agent tool call.
 2. Repository/session-specific temporary state records the result and prompt. It
-   records approval only for the current implementation task, after the host completes
-   the matching operation that received Graphify's initial approval request. A new
-   task invalidates approval; a short continuation preserves it.
+   never records a reusable edit approval. Each prompt invalidates old readiness.
    For short continuation prompts, previous request context accompanies the actual
    follow-up; a conversational "yes" does not grant tool permission.
 3. Copilot CLI/Agent Host uses `userPromptTransformed` to append evidence to the
@@ -65,20 +59,12 @@ and all other existing functionality remain available.
    the model attempted to finish without using tools; it never loops indefinitely.
 4. Explanation turns deny repository tools after graph analysis, so the model must
    answer from the evidence or report missing detail. Implementation turns request
-   approval once for the complete graph-based plan, before source inspection or
-   execution. After the matching host-completed operation, subsequent files, edits,
-   tests and planned refreshes receive no extra Graphify permission decision.
-   Native host permissions remain in effect; Graphify does not return an allow override.
-5. Successful edits trigger a reminder to test and run
-   `graphify update .` within the approved scope and native permissions. A successful
+   native permission for source tools, edit tools, arbitrary shell, MCP operations,
+   and delegation. The instructions require a concrete graph-based plan and user
+   approval before targeted source inspection, then approved edits and tests.
+5. Successful edits trigger a reminder to test and request permission for
+   `graphify update .`. Updating is never automatic without permission. A successful
    update is re-queried. Declining refresh leaves the graph stale and must be reported.
-
-Approval is scoped to the repository, session and task. New requests, rejection,
-session cleanup or expiration reset it. A conversational yes, an `approved` tool
-argument, an unrelated post-tool event or a cancelled native ask cannot create
-approval. Matching uses the tool name and canonical arguments supplied by the host.
-The latch records host completion, not proof of approval of a natural-language plan;
-the agent must still present the full plan and keep subsequent operations in scope.
 
 Known communication/planning tools keep the host's ordinary permission behavior.
 Unknown tools never receive an automatic allow decision. The adapter does not
@@ -88,8 +74,8 @@ the host's permission UI. Graph maintenance is an explicitly recognized, exact
 commands cannot masquerade as maintenance. Initial extraction additionally requires
 an explicit `/repo-analyzer` prompt.
 
-Missing graphs silently bypass Graphify. Unreadable, corrupt, or timed-out existing
-graphs block repository tools and produce an actionable message. Stale graphs require
+Missing, unreadable, corrupt, or timed-out graphs block repository tools and produce
+an actionable message. Missing graphs require `/repo-analyzer`; stale graphs require
 update approval. Stale persisted evidence is labeled as outdated. Freshness checks
 use the existing `needs_update` marker, Java file metadata and missing recorded paths,
 without reading source contents. In-turn metadata signatures detect new/deleted or
@@ -114,9 +100,7 @@ Important boundaries:
 
 - Hooks constrain agent tool operations, not the host's indexing, editor selections,
   already attached source context, extensions, or the model's prior knowledge.
-- The first Graphify `ask` is the task's native permission gate; after a matching
-  host-completed operation, Graphify defers subsequent decisions to normal host
-  permissions. Plan quality, exact intent,
+- Native permission `ask` is the executable write gate. Plan quality, exact intent,
   which files are necessary, answer fidelity, and running the correct tests still
   depend on the agent following instructions. No supported hook API attests that a
   specific natural-language plan was approved. This implementation does not pretend
@@ -225,25 +209,3 @@ inspect hook diagnostics for prompt query before any source tool; ask for a fix;
 reject the proposal/native prompt and verify no source change; repeat and approve;
 check targeted edits, tests, and an approved graph refresh. Also test missing and
 stale graphs, hook-disabled mode, and restart after repeated installation.
-
-### Task approval validation — 2026-10-15
-
-The combined run of `test_copilot_automatic.py`, `test_graph_first.py`,
-`test_java_agent_skills.py`, `test_repo_analyzer_install.py`,
-`test_java_detect.py` and `test_java_api_docs.py` passed **150 tests** on this
-branch. Regression coverage includes one approval across multiple files and
-tools on both hosts, continuation without a new approval, a new task resetting
-approval, rejection/session cleanup, unmatched post events, and conversational
-yes or model-provided approval flags not granting permission.
-
-The earlier exact file transfer omitted `detect(..., java_inventory=True)` support
-needed by graph synchronization. This change restores that additive metadata-only
-mode; ordinary detection behavior remains unchanged. Graph-present and graph-absent
-conditional integration tests now pass on the combined branch. Retained CLI hooks
-now also support the silent missing-graph fallback described above.
-
-All 50 generated artifacts passed `python -m tools.skillgen --check`.
-`graphify update .` completed with 42 nodes, 55 edges and 10 communities.
-Host permission events are simulated in tests; no live authenticated Copilot UI
-session was used. Reinstall the chosen integration and restart the session to
-load updated hooks and instructions.

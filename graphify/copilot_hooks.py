@@ -24,13 +24,10 @@ graph evidence only; report missing detail rather than opening Java source.
 For implementation: identify impacted APIs, classes, methods, callers and callees;
 present a concrete change plan and ask the user to approve it. Only after approval
 inspect the necessary source files, make approved edits, and run relevant tests.
-Ask for approval of the complete implementation plan once, not for each file.
-After that approval, carry out the scoped edits, tests and graph refresh without
-repeating Graphify approval questions. Native tool permissions still apply.
+Native tool permission prompts are additional gates, not approval of a wider plan.
 Never interpret analysis permission as edit permission. On rejection stop without
-edits. After edits run graphify update for this repository under the approved plan
-and the host's normal permissions. When graph.json is absent, silently use native
-Copilot tools and permissions without warnings or graph generation. Stale graphs
+edits. After edits run graphify update for this repository, asking for its write
+permission. The initial graph must be generated with /repo-analyzer. Stale graphs
 require approval to refresh; never silently
 bypass the graph. Do not ask the user to type a Graphify query command.
 """
@@ -49,26 +46,7 @@ _SKIP = {".git", ".venv", "venv", "node_modules", "target", "build", "dist", "gr
 
 
 def graph_path(root: Path) -> Path:
-    from graphify.paths import GRAPHIFY_OUT
-    return root / GRAPHIFY_OUT / "graph.json"
-
-
-def _repository_root(configured_root: Path, payload: dict) -> Path:
-    """Use the host's current repository, without searching Java source files."""
-    configured_root = configured_root.resolve()
-    cwd = payload.get("cwd")
-    if not isinstance(cwd, str) or not cwd.strip():
-        return configured_root
-    current = Path(cwd)
-    current = (current if current.is_absolute() else configured_root / current).resolve()
-    # Work from subdirectories too, but never inherit an outer repository's
-    # graph across a Git root (including worktrees whose .git is a file).
-    for candidate in (current, *current.parents):
-        if graph_path(candidate).is_file():
-            return candidate
-        if (candidate / ".git").exists() or candidate == configured_root:
-            return candidate
-    return current
+    return root / "graphify-out" / "graph.json"
 
 
 def _fingerprint(path: Path) -> list[int] | None:
@@ -120,7 +98,7 @@ def analyze(root: Path, question: str) -> dict:
     graph = graph_path(root)
     # This existence check is deliberately the first repository-analysis operation.
     if not graph.is_file():
-        return {"status": "missing"}
+        return {"status": "missing", "evidence": "graphify-out/graph.json is missing. Run /repo-analyzer first to generate the initial graph (with write approval). After that, normal repository questions automatically query the graph."}
     from graphify.security import check_graph_file_size_cap
     check_graph_file_size_cap(graph)
     raw = json.loads(graph.read_text(encoding="utf-8"))
@@ -140,8 +118,7 @@ def analyze(root: Path, question: str) -> dict:
     status = "stale" if stale else ("insufficient" if evidence == "No matching nodes found." else "ready")
     if stale:
         evidence = f"Graph is outdated: {stale}. Ask approval to run graphify update . before source access.\nPersisted (outdated) evidence:\n{evidence}"
-    evidence = f"Queried existing graph: {graph.resolve()}\n" + evidence
-    return {"status": status, "evidence": evidence, "graph_path": str(graph.resolve()), "fingerprint": _fingerprint(graph),
+    return {"status": status, "evidence": evidence, "fingerprint": _fingerprint(graph),
             "sources": _source_signature(root)}
 
 
@@ -197,11 +174,6 @@ def _decision(value: str, reason: str) -> dict:
                                    "permissionDecision": value, "permissionDecisionReason": reason}}
 
 
-def _operation_key(name: str, args: dict) -> str:
-    """Match the host's completed operation to the pending approval request."""
-    return hashlib.sha256(json.dumps([name, args], sort_keys=True).encode()).hexdigest()
-
-
 def _graph_maintenance(name: str, args: dict, root: Path) -> bool:
     """Only an exact, non-composed build/update command can recover a missing graph."""
     if name not in _SHELL:
@@ -245,11 +217,7 @@ def _graph_read_command(name: str, args: dict, root: Path, *, commands=None) -> 
 
 
 def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
-    root = _repository_root(root, payload)
-    # Availability precedes session-state checks and every permission gate.
-    # Missing graphs must not create state, scan Java files or interrupt Copilot.
-    if not graph_path(root).is_file():
-        return {}
+    root = root.resolve()
     path = _state_path(root, payload)
     state = _read_state(path)
     if event == "end":
@@ -260,20 +228,17 @@ def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("host supplied no user prompt")
         question = prompt
-        approved_task = False
         mode = "implementation" if _IMPLEMENT.search(prompt) else "explanation"
         if re.match(r"^(explain|describe|what|where|why|how|which|who)\b", prompt.strip(), re.I):
             mode = "explanation"
         if _CONFIRM.fullmatch(prompt.strip()) and state.get("question"):
-            # A continuation preserves existing approval; it cannot create one.
+            # Context continuation is NOT approval. Native ask still gates every tool.
             question = state["question"] + "\nUser follow-up: " + prompt
             mode = state.get("mode", "explanation")
-            approved_task = bool(state.get("approved_task"))
         if _REJECT.fullmatch(prompt.strip()):
             mode = "rejected"
         state = {"question": question, "prompt": prompt, "mode": mode,
-                 "time": time.time(), "delivered": False,
-                 "approved_task": approved_task}
+                 "time": time.time(), "delivered": False}
         # Clear old readiness before querying, including crashes/timeouts.
         _save_state(path, state)
         try:
@@ -281,9 +246,6 @@ def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
         except Exception as exc:
             state.update(status="error", evidence=f"Graphify analysis failed: {exc}. Report this; do not bypass Graphify.")
         _save_state(path, state)
-        if not graph_path(root).is_file():
-            path.unlink(missing_ok=True)
-            return {}
         # Local supports systemMessage. CLI discards prompt-hook stdout; transformed,
         # pre-tool and stop hooks below deliver evidence via documented channels.
         return {"systemMessage": _context(state)}
@@ -307,7 +269,7 @@ def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
         if (changed or state.get("edited")) and not state.get("update_reminded") and not payload.get("stop_hook_active"):
             state["update_reminded"] = True
             _save_state(path, state)
-            reason = "Repository changes require relevant tests and a graph refresh. Report test results and run graphify update . within the approved implementation plan, using normal host permissions. Do not repeat Graphify approval for each file or the planned refresh. If host permission is declined, report that the graph remains outdated."
+            reason = "Repository changes require relevant tests and a graph refresh. Report test results and request approval for graphify update .; do not write without approval. If approval is declined, report that the graph remains outdated."
             return {"decision": "block", "reason": reason,
                     "hookSpecificOutput": {"hookEventName": "Stop", "decision": "block", "reason": reason}}
         return {}
@@ -320,13 +282,6 @@ def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
     if not isinstance(args, dict):
         raise ValueError("invalid tool arguments")
     if event == "post":
-        # PostToolUse is delivered by the host after an allowed operation. Tool
-        # arguments, conversational yes, or an unrelated post event cannot grant
-        # approval. Returning {} later leaves native host permissions untouched.
-        if (state.get("mode") == "implementation"
-                and state.get("pending_approval") == _operation_key(name, args)):
-            state["approved_task"] = True
-            state.pop("pending_approval", None)
         if _graph_maintenance(name, args, root):
             try:
                 state.update(query(root, state.get("question", "Explain repository architecture")))
@@ -355,8 +310,6 @@ def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
             return _decision("deny", "No current prompt was captured. Repair the prompt hook before running repository commands.")
         if state.get("status") == "missing" and not initial_build:
             return _decision("deny", "Initial graph generation requires /repo-analyzer. Ask the user to invoke it first; subsequent questions activate graph queries automatically.")
-        if state.get("approved_task") and state.get("mode") == "implementation":
-            return {}
         return _decision("ask", "Graph generation/update reads Java source and writes graphify-out. Explain why it is needed and obtain explicit user approval.")
     # A changed graph is re-queried automatically, never treated as implicit approval.
     if state.get("fingerprint") != _fingerprint(graph_path(root)) and state.get("question"):
@@ -370,8 +323,6 @@ def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
         if _graph_read_command(name, args, root):
             return {}  # Graph-only command; leave normal host permissions intact.
         if _graph_read_command(name, args, root, commands={"api-docs"}):
-            if state.get("approved_task") and state.get("mode") == "implementation":
-                return {}
             return _decision("ask", "API documentation uses the analyzed graph and writes documents. Approve the output location and any requested overwrites before running.")
     if state.get("status") != "ready":
         return _decision("deny", _context(state))
@@ -379,11 +330,11 @@ def handle(event: str, payload: dict, root: Path, *, query=_worker) -> dict:
         return _decision("deny", "Java files changed since the automatic query. Ask approval to refresh the graph before source analysis.")
     if state.get("mode") != "implementation":
         return _decision("deny", "Explanation-only request: answer from the graph evidence. Report gaps; do not search or read Java sources, execute shell commands, or edit files.\n" + _context(state))
-    if state.get("approved_task"):
-        return {}  # Continue the scoped task under normal host permissions.
-    state["pending_approval"] = _operation_key(name, args)
-    _save_state(path, state)
-    return _decision("ask", "Graph analysis is complete. Explain the graph-based impact, affected files and complete implementation plan, including edits, tests and graph refresh. Obtain explicit approval once for this task before targeted source inspection or execution. Do not ask again for each file. Native host permissions still apply; analysis permission is not edit permission.")
+    if name in _READ or name in _SEARCH:
+        return _decision("ask", "Graph analysis is complete. First explain the graph-based impact and proposed changes. Obtain approval before targeted source inspection; inspect only files needed for the approved implementation.")
+    # Includes edit tools, shell, MCP tools, notebooks and delegation. Do not try to
+    # guess whether arbitrary code is read-only or trust model-supplied approval flags.
+    return _decision("ask", "Graph analysis is complete. Explain the proposed operation and affected files, and obtain explicit approval before execution. Approval to analyze is not permission to edit. After approved edits, test and request graphify update . permission.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -391,20 +342,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("event", choices=["prompt", "transformed", "pre", "post", "stop", "end", "analyze"])
     parser.add_argument("--root", type=Path, default=Path.cwd())
     options = parser.parse_args(argv)
-    root = options.root.resolve()
     try:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             raise ValueError("hook input must be an object")
-        root = _repository_root(root, payload)
-        result = (analyze(root, payload["prompt"]) if options.event == "analyze"
-                  else handle(options.event, payload, root))
+        result = (analyze(options.root.resolve(), payload["prompt"]) if options.event == "analyze"
+                  else handle(options.event, payload, options.root))
         print(json.dumps(result, ensure_ascii=True))
         return 0
     except Exception as exc:
-        if not graph_path(root).is_file():
-            print(json.dumps({"status": "missing"} if options.event == "analyze" else {}))
-            return 0
         message = f"Graphify hook failed: {exc}. Stop repository analysis and repair the integration."
         if options.event == "pre":
             print(json.dumps(_decision("deny", message)))
