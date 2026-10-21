@@ -197,6 +197,49 @@ def _retire_legacy_skill(skill_dst: Path) -> None:
     print(f"  legacy /graphify skill backed up -> {backup}")
 
 
+def _migrate_vscode_workspace_claude_skill(project_dir: Path) -> Path | None:
+    """Migrate a legacy workspace Claude skill that VS Code Copilot can discover.
+
+    Copilot's VS Code harness also scans ``.claude/skills``.  Older graphify
+    releases installed ``.claude/skills/graphify/SKILL.md`` there, while the
+    current VS Code installer normally writes the user skill under
+    ``~/.copilot/skills``.  Without an explicit cross-location migration the
+    stale workspace skill remains visible and may be selected ahead of the new
+    user skill.
+
+    Only migrate when that exact legacy entry exists.  Preserve its contents as
+    a backup even when it predates version stamps; invoking ``vscode install``
+    is explicit authorization to replace Graphify's legacy workspace identity.
+    Unrelated Claude skills are never inspected or changed.
+    """
+    legacy = project_dir / ".claude" / "skills" / "graphify" / "SKILL.md"
+    if not legacy.is_file():
+        return None
+
+    platform_name = "windows" if platform.system() == "Windows" else "claude"
+    skill_dst = _copy_skill_file(
+        platform_name,
+        project=True,
+        project_dir=project_dir,
+    )
+
+    # _copy_skill_file retires stamped legacy entries.  Older/manual installs
+    # may have no stamp, so preserve and disable the remaining entry here.
+    if legacy.is_file():
+        backup = legacy.with_name("SKILL.md.graphify-backup")
+        if backup.exists() or backup.is_symlink():
+            suffix = 1
+            while True:
+                candidate = legacy.with_name(f"SKILL.md.graphify-backup-{suffix}")
+                if not candidate.exists() and not candidate.is_symlink():
+                    backup = candidate
+                    break
+                suffix += 1
+        legacy.rename(backup)
+        print(f"  legacy VS Code workspace skill backed up -> {backup}")
+    return skill_dst
+
+
 def _copy_skill_file(platform_name: str, *, project: bool = False, project_dir: Path | None = None) -> Path:
     """Copy a packaged skill file and write its version stamp.
 
@@ -860,8 +903,9 @@ def gemini_uninstall(project_dir: Path | None = None, *, project: bool = False, 
 _VSCODE_INSTRUCTIONS_MARKER = "## graphify"
 def vscode_install(project_dir: Path | None = None) -> None:
     """Install graphify skill for VS Code Copilot Chat + write .github/copilot-instructions.md."""
+    project_dir = project_dir or Path(".")
     from graphify.copilot_install import install as install_automatic
-    install_automatic(project_dir or Path("."))
+    install_automatic(project_dir)
     skill_src = Path(__file__).parent / "skill-vscode.md"
     refs_bundle = "vscode"
     if not skill_src.exists():
@@ -891,6 +935,10 @@ def vscode_install(project_dir: Path | None = None) -> None:
     (skill_dst.parent / ".graphify_version").write_text(__version__, encoding="utf-8")
     print(f"  skill installed  ->  {skill_dst}")
     _retire_legacy_skill(skill_dst)
+
+    # Copilot also discovers workspace skills under .claude/skills.  Migrate an
+    # existing pre-rename Graphify skill so it cannot shadow repo-analyzer.
+    _migrate_vscode_workspace_claude_skill(project_dir)
 
     # The shared automatic installer above owns the marked instruction update.
     # A second writer would overwrite its markers and report a misleading no-op.
