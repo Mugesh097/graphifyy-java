@@ -197,6 +197,46 @@ def _retire_legacy_skill(skill_dst: Path) -> None:
     print(f"  legacy /graphify skill backed up -> {backup}")
 
 
+def _backup_remaining_legacy_skill(skill_dst: Path, *, context: str) -> Path | None:
+    """Preserve and disable an unstamped legacy sibling after an explicit migration."""
+    legacy = skill_dst.parent.parent / "graphify" / "SKILL.md"
+    if not legacy.is_file():
+        return None
+
+    backup = legacy.with_name("SKILL.md.graphify-backup")
+    if backup.exists() or backup.is_symlink():
+        suffix = 1
+        while True:
+            candidate = legacy.with_name(f"SKILL.md.graphify-backup-{suffix}")
+            if not candidate.exists() and not candidate.is_symlink():
+                backup = candidate
+                break
+            suffix += 1
+    legacy.rename(backup)
+    print(f"  legacy {context} skill backed up -> {backup}")
+    return backup
+
+
+def _install_vscode_claude_skill(
+    *, project: bool = False, project_dir: Path | None = None
+) -> Path:
+    """Install the Claude-compatible copy also discovered by VS Code Copilot."""
+    platform_name = "windows" if platform.system() == "Windows" else "claude"
+    skill_dst = _copy_skill_file(
+        platform_name,
+        project=project,
+        project_dir=project_dir,
+    )
+    # _copy_skill_file retires stamped legacy entries. Older Graphify installs
+    # can predate the stamp; this explicit VS Code migration still preserves
+    # their contents before disabling the obsolete /graphify identity.
+    _backup_remaining_legacy_skill(
+        skill_dst,
+        context="VS Code Claude-compatible",
+    )
+    return skill_dst
+
+
 def _migrate_vscode_workspace_claude_skill(project_dir: Path) -> Path | None:
     """Migrate a legacy workspace Claude skill that VS Code Copilot can discover.
 
@@ -216,28 +256,10 @@ def _migrate_vscode_workspace_claude_skill(project_dir: Path) -> Path | None:
     if not legacy.is_file():
         return None
 
-    platform_name = "windows" if platform.system() == "Windows" else "claude"
-    skill_dst = _copy_skill_file(
-        platform_name,
+    return _install_vscode_claude_skill(
         project=True,
         project_dir=project_dir,
     )
-
-    # _copy_skill_file retires stamped legacy entries.  Older/manual installs
-    # may have no stamp, so preserve and disable the remaining entry here.
-    if legacy.is_file():
-        backup = legacy.with_name("SKILL.md.graphify-backup")
-        if backup.exists() or backup.is_symlink():
-            suffix = 1
-            while True:
-                candidate = legacy.with_name(f"SKILL.md.graphify-backup-{suffix}")
-                if not candidate.exists() and not candidate.is_symlink():
-                    backup = candidate
-                    break
-                suffix += 1
-        legacy.rename(backup)
-        print(f"  legacy VS Code workspace skill backed up -> {backup}")
-    return skill_dst
 
 
 def _copy_skill_file(platform_name: str, *, project: bool = False, project_dir: Path | None = None) -> Path:
@@ -927,6 +949,11 @@ def vscode_install(project_dir: Path | None = None) -> None:
     (skill_dst.parent / ".graphify_version").write_text(__version__, encoding="utf-8")
     print(f"  skill installed  ->  {skill_dst}")
     _retire_legacy_skill(skill_dst)
+
+    # VS Code Copilot discovers personal skills from both ~/.copilot/skills and
+    # ~/.claude/skills. Keep both copies current so an older Claude-compatible
+    # skill cannot continue to win discovery after a Graphify upgrade.
+    _install_vscode_claude_skill()
 
     # Copilot also discovers workspace skills under .claude/skills.  Migrate an
     # existing pre-rename Graphify skill so it cannot shadow repo-analyzer.
