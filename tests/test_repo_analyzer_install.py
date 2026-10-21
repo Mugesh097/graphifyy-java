@@ -77,6 +77,28 @@ def test_vscode_install_migrates_workspace_claude_legacy_skill(
     assert not legacy.exists()
     assert legacy.with_name("SKILL.md.graphify-backup").read_text(encoding="utf-8") == original
     assert (home / ".copilot" / "skills" / "repo-analyzer" / "SKILL.md").is_file()
+    assert (home / ".claude" / "skills" / "repo-analyzer" / "SKILL.md").is_file()
+
+
+@pytest.mark.parametrize("stamped", [False, True])
+def test_vscode_install_updates_personal_claude_skill_and_retires_legacy(
+    tmp_path, monkeypatch, stamped
+):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    legacy = tmp_path / ".claude" / "skills" / "graphify" / "SKILL.md"
+    legacy.parent.mkdir(parents=True)
+    original = "---\nname: graphify\n---\nOld personal skill\n"
+    legacy.write_text(original, encoding="utf-8")
+    if stamped:
+        (legacy.parent / ".graphify_version").write_text("0.9.0", encoding="utf-8")
+
+    installer.vscode_install(tmp_path / "project")
+
+    migrated = tmp_path / ".claude" / "skills" / "repo-analyzer" / "SKILL.md"
+    assert "name: repo-analyzer" in migrated.read_text(encoding="utf-8")
+    assert (migrated.parent / "references" / "query.md").is_file()
+    assert not legacy.exists()
+    assert legacy.with_name("SKILL.md.graphify-backup").read_text(encoding="utf-8") == original
 
 
 @pytest.mark.parametrize("stamped,backup_exists", [(False, False), (True, True)])
